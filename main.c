@@ -731,7 +731,8 @@ static const char usage[] =
 	"  -p           Select a single point.\n"
 	"  -r           Restrict selection to predefined boxes.\n"
 	"  -a w:h       Force aspect ratio.\n"
-	"  -x           Display crosshairs across active display output.\n";
+	"  -x           Display crosshairs across active display output.\n"
+	"  -y s         Set background image.\n";
 
 uint32_t parse_color(const char *color) {
 	if (color[0] == '#') {
@@ -907,7 +908,7 @@ int main(int argc, char *argv[]) {
 	char *format = "%x,%y %wx%h\n";
 	bool output_boxes = false;
 	int w, h;
-	while ((opt = getopt(argc, argv, "hdb:c:s:B:w:proa:f:F:x")) != -1) {
+	while ((opt = getopt(argc, argv, "hdb:c:s:B:w:proa:f:F:xy:")) != -1) {
 		switch (opt) {
 		case 'h':
 			printf("%s", usage);
@@ -966,6 +967,9 @@ int main(int argc, char *argv[]) {
 			break;
 		case 'x':
 			state.crosshairs = true;
+			break;
+		case 'y':
+			// todo load background image into cairo surface
 			break;
 		default:
 			printf("%s", usage);
