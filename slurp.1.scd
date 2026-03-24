@@ -77,6 +77,9 @@ held, the selection is moved instead of being resized.
 	Draw fullscreen crosshairs on the display output containing the cursor until
 	a selection is started. This help aligning the origin of the selection.
 
+*-y* _background image_
+	Draw specified PNG background image on each display output.
+
 # COLORS
 
 Colors may be specified in #RRGGBB or #RRGGBBAA format. The # is optional.

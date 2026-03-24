@@ -895,6 +895,7 @@ int main(int argc, char *argv[]) {
 			.selection = SELECTION_COLOR,
 			.choice = BG_COLOR,
 		},
+		.background_surface = NULL,
 		.border_weight = 2,
 		.display_dimensions = false,
 		.restrict_selection = false,
@@ -969,7 +970,14 @@ int main(int argc, char *argv[]) {
 			state.crosshairs = true;
 			break;
 		case 'y':
-			// todo load background image into cairo surface
+			state.background_surface = cairo_image_surface_create_from_png(optarg);
+			cairo_status_t status_code = cairo_surface_status(state.background_surface);
+			if (cairo_surface_status(state.background_surface) != 0) {
+				fprintf(stderr, "failed to load background image: %s\n", cairo_status_to_string(status_code));
+				cairo_surface_destroy(state.background_surface);
+				state.background_surface = NULL;
+				return EXIT_FAILURE;
+			}
 			break;
 		default:
 			printf("%s", usage);
@@ -1134,6 +1142,10 @@ int main(int argc, char *argv[]) {
 	wl_registry_destroy(state.registry);
 	xkb_context_unref(state.xkb_context);
 	wl_display_disconnect(state.display);
+
+	if (state.background_surface) {
+		cairo_surface_destroy(state.background_surface);
+	}
 
 	struct slurp_box *box, *box_tmp;
 	wl_list_for_each_safe(box, box_tmp, &state.boxes, link) {

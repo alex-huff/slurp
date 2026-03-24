@@ -1,4 +1,3 @@
-#include <cairo/cairo.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -88,5 +87,11 @@ void render(struct slurp_output *output) {
 				      sel_box->y + sel_box->height + 20);
 			cairo_show_text(cairo, dimensions);
 		}
+	}
+
+	if (state->background_surface) {
+		cairo_set_operator(cairo, CAIRO_OPERATOR_DEST_OVER);
+		cairo_set_source_surface(cairo, state->background_surface, 0, 0);
+		cairo_paint(cairo);
 	}
 }

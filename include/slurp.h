@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <wayland-client.h>
+#include <cairo/cairo.h>
 
 #include "box.h"
 #include "cursor-shape-v1-client-protocol.h"
@@ -43,6 +44,8 @@ struct slurp_state {
     uint32_t selection;
     uint32_t choice;
   } colors;
+
+  cairo_surface_t *background_surface;
 
   const char *font_family;
 
