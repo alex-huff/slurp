@@ -25,6 +25,7 @@ struct slurp_selection {
 struct slurp_state {
   bool running;
   bool edit_anchor;
+  bool selection_started;
 
   struct wl_display *display;
   struct wl_registry *registry;
@@ -53,7 +54,6 @@ struct slurp_state {
   bool display_dimensions;
   bool single_point;
   bool restrict_selection;
-  bool crosshairs;
   bool resizing_selection;
   struct wl_list boxes; // slurp_box::link
   bool fixed_aspect_ratio;
@@ -85,6 +85,10 @@ struct slurp_output {
 
   struct wl_cursor_theme *cursor_theme;
   struct wl_cursor_image *cursor_image;
+
+  cairo_surface_t *drawing_surface;
+  cairo_t *drawing_surface_cairo;
+  void *drawing_surface_data;
 };
 
 struct slurp_seat {
@@ -104,6 +108,7 @@ struct slurp_seat {
   // pointer:
   struct wl_pointer *wl_pointer;
   enum wl_pointer_button_state button_state;
+  uint32_t last_button;
 
   // keymap:
   struct xkb_keymap *xkb_keymap;

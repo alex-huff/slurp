@@ -23,9 +23,11 @@ void render(struct slurp_output *output) {
 	struct pool_buffer *buffer = output->current_buffer;
 	cairo_t *cairo = buffer->cairo;
 
+	cairo_save(cairo);
+
 	// Clear
 	cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
-	set_source_u32(cairo, state->colors.background);
+	set_source_u32(cairo, state->selection_started ? state->colors.background : 0x00000000);
 	cairo_paint(cairo);
 
 	// Draw option boxes from input
@@ -42,18 +44,6 @@ void render(struct slurp_output *output) {
 	wl_list_for_each(seat, &state->seats, link) {
 		struct slurp_selection *current_selection =
 			slurp_seat_current_selection(seat);
-
-		if (!current_selection->has_selection && state->crosshairs) {
-			struct slurp_box *output_box = &output->logical_geometry;
-			if (in_box(output_box, current_selection->x, current_selection->y)) {
-
-				set_source_u32(cairo, state->colors.border);
-				cairo_rectangle(cairo, output_box->x, current_selection->y, output->logical_geometry.width, 1);
-				cairo_fill(cairo);
-				cairo_rectangle(cairo, current_selection->x, output->logical_geometry.y, 1, output->logical_geometry.height);
-				cairo_fill(cairo);
-			}
-		}
 
 		if (!current_selection->has_selection) {
 			continue;
@@ -89,9 +79,19 @@ void render(struct slurp_output *output) {
 		}
 	}
 
+	cairo_identity_matrix(cairo);
+
 	if (state->background_surface) {
 		cairo_set_operator(cairo, CAIRO_OPERATOR_DEST_OVER);
 		cairo_set_source_surface(cairo, state->background_surface, 0, 0);
 		cairo_paint(cairo);
 	}
+
+	if (output->drawing_surface) {
+		cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
+		cairo_set_source_surface(cairo, output->drawing_surface, 0, 0);
+		cairo_paint(cairo);
+	}
+
+	cairo_restore(cairo);
 }

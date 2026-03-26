@@ -19,6 +19,8 @@
 #define BORDER_COLOR 0x000000FF
 #define SELECTION_COLOR 0x00000000
 #define FONT_FAMILY "sans-serif"
+#define M_PI 3.14159265358979323846
+#define LINE_WIDTH 10
 
 static void noop() {
 	// This space intentionally left blank
@@ -74,16 +76,82 @@ static void seat_update_selection(struct slurp_seat *seat) {
 }
 
 static void seat_set_outputs_dirty(struct slurp_seat *seat) {
-	struct slurp_state *state = seat->state;
 	struct slurp_output *output;
 	wl_list_for_each(output, &seat->state->outputs, link) {
 		struct slurp_box *geometry = &output->logical_geometry;
 		if (box_intersect(geometry, &seat->pointer_selection.selection) ||
-				box_intersect(geometry, &seat->touch_selection.selection) ||
-				(state->crosshairs && in_box(geometry, seat->pointer_selection.x, seat->pointer_selection.y))) {
+				box_intersect(geometry, &seat->touch_selection.selection)) {
 			set_output_dirty(output);
 		}
 	}
+}
+
+static void set_outputs_dirty(struct wl_list *outputs) {
+	struct slurp_output *output;
+	wl_list_for_each(output, outputs, link) {
+		set_output_dirty(output);
+	}
+}
+
+static void resize_drawing_surface(struct slurp_output *output) {
+	int32_t width = output->width * output->scale;
+	int32_t height = output->height * output->scale;
+	const cairo_format_t cairo_fmt = CAIRO_FORMAT_ARGB32;
+	uint32_t stride = cairo_format_stride_for_width(cairo_fmt, width);
+	size_t size = stride * height;
+	output->drawing_surface_data = realloc(output->drawing_surface_data, size);
+	if (output->drawing_surface_cairo) {
+		cairo_destroy(output->drawing_surface_cairo);
+	}
+	if (output->drawing_surface) {
+		cairo_surface_destroy(output->drawing_surface);
+	}
+	output->drawing_surface = cairo_image_surface_create_for_data(output->drawing_surface_data, cairo_fmt, width, height, stride);
+	output->drawing_surface_cairo = cairo_create(output->drawing_surface);
+	cairo_t *cairo = output->drawing_surface_cairo;
+	cairo_set_source_rgba(cairo, 0, 0, 0, 0);
+	cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
+	cairo_paint(cairo);
+	cairo_set_source_rgba(cairo, 204 / 255.0, 36 / 255.0, 29 / 255.0, 128 / 255.0);
+	cairo_set_line_width(cairo, LINE_WIDTH);
+}
+
+static void setup_draw_cairo(struct slurp_output *output) {
+	cairo_t *cairo = output->drawing_surface_cairo;
+	cairo_identity_matrix(cairo);
+	cairo_scale(cairo, output->scale, output->scale);
+	cairo_translate(cairo, -output->logical_geometry.x, -output->logical_geometry.y);
+}
+
+static void draw_circle(cairo_t *cairo, int32_t x, int32_t y, double radius) {
+	cairo_arc(cairo, x, y, radius, 0, 2 * M_PI);
+	cairo_fill(cairo);
+}
+
+static void handle_draw_start(struct slurp_seat *seat,
+			  struct slurp_selection *current_selection) {
+	struct slurp_output *output = current_selection->current_output;
+	cairo_t *cairo = output->drawing_surface_cairo;
+	setup_draw_cairo(output);
+	draw_circle(cairo, current_selection->x, current_selection->y, LINE_WIDTH / 2);
+	cairo_move_to(cairo, current_selection->x, current_selection->y);
+	set_output_dirty(output);
+}
+
+static void handle_draw_drag(struct slurp_seat *seat,
+			 struct slurp_selection *current_selection) {
+	struct slurp_output *output = current_selection->current_output;
+	cairo_t *cairo = output->drawing_surface_cairo;
+	setup_draw_cairo(output);
+	cairo_line_to(cairo, current_selection->x, current_selection->y);
+	cairo_stroke(cairo);
+	draw_circle(cairo, current_selection->x, current_selection->y, LINE_WIDTH / 2);
+	cairo_move_to(cairo, current_selection->x, current_selection->y);
+	set_output_dirty(output);
+}
+
+static void handle_draw_end(struct slurp_seat *seat,
+			struct slurp_selection *current_selection) {
 }
 
 static void handle_active_selection_motion(struct slurp_seat *seat, struct slurp_selection *current_selection) {
@@ -116,13 +184,14 @@ static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
 		uint32_t serial, struct wl_surface *surface,
 		wl_fixed_t surface_x, wl_fixed_t surface_y) {
 	struct slurp_seat *seat = data;
-	struct slurp_output *output = output_from_surface(seat->state, surface);
+	struct slurp_state *state = seat->state;
+	struct slurp_output *output = output_from_surface(state, surface);
 	if (output == NULL) {
 		return;
 	}
 
 	// the places the cursor moved away from are also dirty
-	if (seat->pointer_selection.has_selection || seat->state->crosshairs) {
+	if (seat->pointer_selection.has_selection) {
 		seat_set_outputs_dirty(seat);
 	}
 
@@ -136,7 +205,11 @@ static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
 		seat_update_selection(seat);
 		break;
 	case WL_POINTER_BUTTON_STATE_PRESSED:
-		handle_active_selection_motion(seat, &seat->pointer_selection);
+		if (seat->last_button == BTN_LEFT) {
+			handle_active_selection_motion(seat, &seat->pointer_selection);
+		} else {
+			seat_update_selection(seat);
+		}
 		break;
 	}
 
@@ -147,7 +220,7 @@ static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
 			wp_cursor_shape_manager_v1_get_pointer(
 				output->state->cursor_shape_manager, wl_pointer);
 		wp_cursor_shape_device_v1_set_shape(device, serial,
-			WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR);
+			WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
 		wp_cursor_shape_device_v1_destroy(device);
 	} else {
 		wl_surface_set_buffer_scale(seat->cursor_surface, output->scale);
@@ -171,10 +244,9 @@ static void pointer_handle_leave(void *data, struct wl_pointer *wl_pointer,
 static void pointer_handle_motion(void *data, struct wl_pointer *wl_pointer,
 		uint32_t time, wl_fixed_t surface_x, wl_fixed_t surface_y) {
 	struct slurp_seat *seat = data;
-	struct slurp_state *state = seat->state;
 
 	// the places the cursor moved away from are also dirty
-	if (seat->pointer_selection.has_selection || state->crosshairs) {
+	if (seat->pointer_selection.has_selection) {
 		seat_set_outputs_dirty(seat);
 	}
 
@@ -185,11 +257,16 @@ static void pointer_handle_motion(void *data, struct wl_pointer *wl_pointer,
 		seat_update_selection(seat);
 		break;
 	case WL_POINTER_BUTTON_STATE_PRESSED:
-		handle_active_selection_motion(seat, &seat->pointer_selection);
+		if (seat->last_button == BTN_LEFT) {
+			handle_active_selection_motion(seat, &seat->pointer_selection);
+		} else {
+			seat_update_selection(seat);
+			handle_draw_drag(seat, &seat->pointer_selection);
+		}
 		break;
 	}
 
-	if (seat->pointer_selection.has_selection || state->crosshairs) {
+	if (seat->pointer_selection.has_selection) {
 		seat_set_outputs_dirty(seat);
 	}
 }
@@ -211,6 +288,12 @@ static void handle_selection_start(struct slurp_seat *seat,
 	} else {
 		current_selection->anchor_x = current_selection->x;
 		current_selection->anchor_y = current_selection->y;
+		current_selection->selection.x = current_selection->x;
+		current_selection->selection.y = current_selection->y;
+		current_selection->selection.width = 0;
+		current_selection->selection.height = 0;
+		state->selection_started = true;
+		set_outputs_dirty(&state->outputs);
 	}
 }
 
@@ -247,7 +330,10 @@ static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 		return;
 	}
 
+	struct slurp_state *state = seat->state;
+
 	seat->button_state = button_state;
+	seat->last_button = button;
 	switch (button) {
 	case BTN_LEFT:
 		switch (button_state) {
@@ -257,6 +343,20 @@ static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 		case WL_POINTER_BUTTON_STATE_RELEASED:
 			handle_selection_end(seat, &seat->pointer_selection);
 			break;
+		}
+		break;
+	case BTN_RIGHT:
+		if (!state->selection_started) {
+			switch (button_state) {
+			case WL_POINTER_BUTTON_STATE_PRESSED:
+				handle_draw_start(seat, &seat->pointer_selection);
+				break;
+			case WL_POINTER_BUTTON_STATE_RELEASED:
+				handle_draw_end(seat, &seat->pointer_selection);
+				break;
+			}
+		} else {
+			handle_selection_cancelled(seat);
 		}
 		break;
 	default: //other mouse buttons cancel the selection
@@ -501,6 +601,7 @@ static void output_handle_scale(void *data, struct wl_output *wl_output,
 	struct slurp_output *output = data;
 
 	output->scale = scale;
+	resize_drawing_surface(output);
 }
 
 static const struct wl_output_listener output_listener = {
@@ -572,6 +673,15 @@ static void destroy_output(struct slurp_output *output) {
 	}
 	wl_output_destroy(output->wl_output);
 	free(output->logical_geometry.label);
+	if (output->drawing_surface_cairo) {
+		cairo_destroy(output->drawing_surface_cairo);
+	}
+	if (output->drawing_surface) {
+		cairo_surface_destroy(output->drawing_surface);
+	}
+	if (output->drawing_surface_data) {
+		free(output->drawing_surface_data);
+	}
 	free(output);
 }
 
@@ -664,6 +774,7 @@ static void layer_surface_handle_configure(void *data,
 	output->width = width;
 	output->height = height;
 
+	resize_drawing_surface(output);
 	zwlr_layer_surface_v1_ack_configure(surface, serial);
 	send_frame(output);
 }
@@ -731,7 +842,6 @@ static const char usage[] =
 	"  -p           Select a single point.\n"
 	"  -r           Restrict selection to predefined boxes.\n"
 	"  -a w:h       Force aspect ratio.\n"
-	"  -x           Display crosshairs across active display output.\n"
 	"  -y s         Set background image.\n";
 
 uint32_t parse_color(const char *color) {
@@ -869,12 +979,7 @@ static bool create_cursors(struct slurp_state *state) {
 			return false;
 		}
 		struct wl_cursor *cursor =
-			wl_cursor_theme_get_cursor(output->cursor_theme, "crosshair");
-		if (cursor == NULL) {
-			// Fallback
-			cursor =
-				wl_cursor_theme_get_cursor(output->cursor_theme, "left_ptr");
-		}
+			wl_cursor_theme_get_cursor(output->cursor_theme, "left_ptr");
 		if (cursor == NULL) {
 			fprintf(stderr, "failed to load cursor\n");
 			return false;
@@ -909,7 +1014,7 @@ int main(int argc, char *argv[]) {
 	char *format = "%x,%y %wx%h\n";
 	bool output_boxes = false;
 	int w, h;
-	while ((opt = getopt(argc, argv, "hdb:c:s:B:w:proa:f:F:xy:")) != -1) {
+	while ((opt = getopt(argc, argv, "hdb:c:s:B:w:proa:f:F:y:")) != -1) {
 		switch (opt) {
 		case 'h':
 			printf("%s", usage);
@@ -965,9 +1070,6 @@ int main(int argc, char *argv[]) {
 			}
 			state.fixed_aspect_ratio = true;
 			state.aspect_ratio = (double) h / w;
-			break;
-		case 'x':
-			state.crosshairs = true;
 			break;
 		case 'y':
 			state.background_surface = cairo_image_surface_create_from_png(optarg);
