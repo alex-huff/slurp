@@ -73,10 +73,6 @@ held, the selection is moved instead of being resized.
 	Force selections to have the given aspect ratio. This constraint is not
 	applied to the predefined rectangles specified using *-o*.
 
-*-x*
-	Draw fullscreen crosshairs on the display output containing the cursor until
-	a selection is started. This help aligning the origin of the selection.
-
 *-y* _background image_
 	Draw specified PNG background image on each display output.
 

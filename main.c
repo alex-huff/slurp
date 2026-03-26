@@ -74,13 +74,11 @@ static void seat_update_selection(struct slurp_seat *seat) {
 }
 
 static void seat_set_outputs_dirty(struct slurp_seat *seat) {
-	struct slurp_state *state = seat->state;
 	struct slurp_output *output;
 	wl_list_for_each(output, &seat->state->outputs, link) {
 		struct slurp_box *geometry = &output->logical_geometry;
 		if (box_intersect(geometry, &seat->pointer_selection.selection) ||
-				box_intersect(geometry, &seat->touch_selection.selection) ||
-				(state->crosshairs && in_box(geometry, seat->pointer_selection.x, seat->pointer_selection.y))) {
+				box_intersect(geometry, &seat->touch_selection.selection)) {
 			set_output_dirty(output);
 		}
 	}
@@ -116,13 +114,14 @@ static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
 		uint32_t serial, struct wl_surface *surface,
 		wl_fixed_t surface_x, wl_fixed_t surface_y) {
 	struct slurp_seat *seat = data;
-	struct slurp_output *output = output_from_surface(seat->state, surface);
+	struct slurp_state *state = seat->state;
+	struct slurp_output *output = output_from_surface(state, surface);
 	if (output == NULL) {
 		return;
 	}
 
 	// the places the cursor moved away from are also dirty
-	if (seat->pointer_selection.has_selection || seat->state->crosshairs) {
+	if (seat->pointer_selection.has_selection) {
 		seat_set_outputs_dirty(seat);
 	}
 
@@ -131,13 +130,15 @@ static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
 
 	move_seat(seat, surface_x, surface_y, &seat->pointer_selection);
 
-	switch (seat->button_state) {
-	case WL_POINTER_BUTTON_STATE_RELEASED:
-		seat_update_selection(seat);
-		break;
-	case WL_POINTER_BUTTON_STATE_PRESSED:
-		handle_active_selection_motion(seat, &seat->pointer_selection);
-		break;
+	if (seat->last_button == BTN_LEFT) {
+		switch (seat->button_state) {
+		case WL_POINTER_BUTTON_STATE_RELEASED:
+			seat_update_selection(seat);
+			break;
+		case WL_POINTER_BUTTON_STATE_PRESSED:
+			handle_active_selection_motion(seat, &seat->pointer_selection);
+			break;
+		}
 	}
 
 	seat_set_outputs_dirty(seat);
@@ -147,7 +148,7 @@ static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
 			wp_cursor_shape_manager_v1_get_pointer(
 				output->state->cursor_shape_manager, wl_pointer);
 		wp_cursor_shape_device_v1_set_shape(device, serial,
-			WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR);
+			WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
 		wp_cursor_shape_device_v1_destroy(device);
 	} else {
 		wl_surface_set_buffer_scale(seat->cursor_surface, output->scale);
@@ -171,27 +172,38 @@ static void pointer_handle_leave(void *data, struct wl_pointer *wl_pointer,
 static void pointer_handle_motion(void *data, struct wl_pointer *wl_pointer,
 		uint32_t time, wl_fixed_t surface_x, wl_fixed_t surface_y) {
 	struct slurp_seat *seat = data;
-	struct slurp_state *state = seat->state;
 
 	// the places the cursor moved away from are also dirty
-	if (seat->pointer_selection.has_selection || state->crosshairs) {
+	if (seat->pointer_selection.has_selection) {
 		seat_set_outputs_dirty(seat);
 	}
 
 	move_seat(seat, surface_x, surface_y, &seat->pointer_selection);
 
-	switch (seat->button_state) {
-	case WL_POINTER_BUTTON_STATE_RELEASED:
-		seat_update_selection(seat);
-		break;
-	case WL_POINTER_BUTTON_STATE_PRESSED:
-		handle_active_selection_motion(seat, &seat->pointer_selection);
-		break;
+	if (seat->last_button == BTN_LEFT) {
+		switch (seat->button_state) {
+		case WL_POINTER_BUTTON_STATE_RELEASED:
+			seat_update_selection(seat);
+			break;
+		case WL_POINTER_BUTTON_STATE_PRESSED:
+			handle_active_selection_motion(seat, &seat->pointer_selection);
+			break;
+		}
 	}
 
-	if (seat->pointer_selection.has_selection || state->crosshairs) {
+	if (seat->pointer_selection.has_selection) {
 		seat_set_outputs_dirty(seat);
 	}
+}
+
+static void handle_draw_start(struct slurp_seat *seat,
+			  struct slurp_selection *current_selection) {
+	/* struct slurp_state *state = seat->state; */
+	// TODO draw a circle at current_selection->x : current_selection->y
+}
+
+static void handle_draw_end(struct slurp_seat *seat,
+			struct slurp_selection *current_selection) {
 }
 
 static void handle_selection_start(struct slurp_seat *seat,
@@ -211,6 +223,7 @@ static void handle_selection_start(struct slurp_seat *seat,
 	} else {
 		current_selection->anchor_x = current_selection->x;
 		current_selection->anchor_y = current_selection->y;
+		state->selection_started = true;
 	}
 }
 
@@ -247,7 +260,10 @@ static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 		return;
 	}
 
+	struct slurp_state *state = seat->state;
+
 	seat->button_state = button_state;
+	seat->last_button = button;
 	switch (button) {
 	case BTN_LEFT:
 		switch (button_state) {
@@ -257,6 +273,20 @@ static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 		case WL_POINTER_BUTTON_STATE_RELEASED:
 			handle_selection_end(seat, &seat->pointer_selection);
 			break;
+		}
+		break;
+	case BTN_RIGHT:
+		if (!state->selection_started) {
+			switch (button_state) {
+			case WL_POINTER_BUTTON_STATE_PRESSED:
+				handle_draw_start(seat, &seat->pointer_selection);
+				break;
+			case WL_POINTER_BUTTON_STATE_RELEASED:
+				handle_draw_end(seat, &seat->pointer_selection);
+				break;
+			}
+		} else {
+			handle_selection_cancelled(seat);
 		}
 		break;
 	default: //other mouse buttons cancel the selection
@@ -731,7 +761,6 @@ static const char usage[] =
 	"  -p           Select a single point.\n"
 	"  -r           Restrict selection to predefined boxes.\n"
 	"  -a w:h       Force aspect ratio.\n"
-	"  -x           Display crosshairs across active display output.\n"
 	"  -y s         Set background image.\n";
 
 uint32_t parse_color(const char *color) {
@@ -869,12 +898,7 @@ static bool create_cursors(struct slurp_state *state) {
 			return false;
 		}
 		struct wl_cursor *cursor =
-			wl_cursor_theme_get_cursor(output->cursor_theme, "crosshair");
-		if (cursor == NULL) {
-			// Fallback
-			cursor =
-				wl_cursor_theme_get_cursor(output->cursor_theme, "left_ptr");
-		}
+			wl_cursor_theme_get_cursor(output->cursor_theme, "left_ptr");
 		if (cursor == NULL) {
 			fprintf(stderr, "failed to load cursor\n");
 			return false;
@@ -909,7 +933,7 @@ int main(int argc, char *argv[]) {
 	char *format = "%x,%y %wx%h\n";
 	bool output_boxes = false;
 	int w, h;
-	while ((opt = getopt(argc, argv, "hdb:c:s:B:w:proa:f:F:xy:")) != -1) {
+	while ((opt = getopt(argc, argv, "hdb:c:s:B:w:proa:f:F:y:")) != -1) {
 		switch (opt) {
 		case 'h':
 			printf("%s", usage);
@@ -965,9 +989,6 @@ int main(int argc, char *argv[]) {
 			}
 			state.fixed_aspect_ratio = true;
 			state.aspect_ratio = (double) h / w;
-			break;
-		case 'x':
-			state.crosshairs = true;
 			break;
 		case 'y':
 			state.background_surface = cairo_image_surface_create_from_png(optarg);
