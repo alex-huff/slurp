@@ -19,8 +19,7 @@
 #define BORDER_COLOR 0x000000FF
 #define SELECTION_COLOR 0x00000000
 #define FONT_FAMILY "sans-serif"
-#define M_PI 3.14159265358979323846
-#define LINE_WIDTH 10
+#define DEFAULT_DRAW_WIDTH 10
 
 static void noop() {
 	// This space intentionally left blank
@@ -112,8 +111,6 @@ static void resize_drawing_surface(struct slurp_output *output) {
 	cairo_set_source_rgba(cairo, 0, 0, 0, 0);
 	cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
 	cairo_paint(cairo);
-	cairo_set_source_rgba(cairo, 204 / 255.0, 36 / 255.0, 29 / 255.0, 128 / 255.0);
-	cairo_set_line_width(cairo, LINE_WIDTH);
 }
 
 static void setup_draw_cairo(struct slurp_output *output) {
@@ -123,17 +120,23 @@ static void setup_draw_cairo(struct slurp_output *output) {
 	cairo_translate(cairo, -output->logical_geometry.x, -output->logical_geometry.y);
 }
 
+static void set_draw_color(cairo_t *cairo, uint8_t opacity) {
+	set_source_u32(cairo, 0xCC241D00 | opacity);
+}
+
 static void draw_circle(cairo_t *cairo, int32_t x, int32_t y, double radius) {
 	cairo_arc(cairo, x, y, radius, 0, 2 * M_PI);
 	cairo_fill(cairo);
 }
 
 static void handle_draw_start(struct slurp_seat *seat,
-			  struct slurp_selection *current_selection) {
+			  struct slurp_selection *current_selection, uint8_t opacity) {
 	struct slurp_output *output = current_selection->current_output;
 	cairo_t *cairo = output->drawing_surface_cairo;
+	cairo_set_line_width(cairo, seat->draw_width);
 	setup_draw_cairo(output);
-	draw_circle(cairo, current_selection->x, current_selection->y, LINE_WIDTH / 2);
+	set_draw_color(cairo, opacity);
+	draw_circle(cairo, current_selection->x, current_selection->y, seat->draw_width / 2);
 	cairo_move_to(cairo, current_selection->x, current_selection->y);
 	set_output_dirty(output);
 }
@@ -142,10 +145,11 @@ static void handle_draw_drag(struct slurp_seat *seat,
 			 struct slurp_selection *current_selection) {
 	struct slurp_output *output = current_selection->current_output;
 	cairo_t *cairo = output->drawing_surface_cairo;
+	cairo_set_line_width(cairo, seat->draw_width);
 	setup_draw_cairo(output);
 	cairo_line_to(cairo, current_selection->x, current_selection->y);
 	cairo_stroke(cairo);
-	draw_circle(cairo, current_selection->x, current_selection->y, LINE_WIDTH / 2);
+	draw_circle(cairo, current_selection->x, current_selection->y, seat->draw_width / 2);
 	cairo_move_to(cairo, current_selection->x, current_selection->y);
 	set_output_dirty(output);
 }
@@ -178,6 +182,27 @@ static void handle_active_selection_motion(struct slurp_seat *seat, struct slurp
 	current_selection->selection.y = dist_y > 0 ? anchor_y : anchor_y - (height - 1);
 	current_selection->selection.width = width;
 	current_selection->selection.height = height;
+}
+
+static void set_default_pointer_cursor(struct slurp_seat *seat, struct slurp_output *output,
+									   struct wl_pointer *wl_pointer, uint32_t serial) {
+	struct slurp_state *state = seat->state;
+	if (state->cursor_shape_manager) {
+		struct wp_cursor_shape_device_v1 *device =
+			wp_cursor_shape_manager_v1_get_pointer(
+				state->cursor_shape_manager, wl_pointer);
+		wp_cursor_shape_device_v1_set_shape(device, serial,
+			WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR);
+		wp_cursor_shape_device_v1_destroy(device);
+	} else {
+		wl_surface_set_buffer_scale(seat->cursor_surface, output->scale);
+		wl_surface_attach(seat->cursor_surface,
+			wl_cursor_image_get_buffer(output->cursor_image), 0, 0);
+		wl_pointer_set_cursor(wl_pointer, serial, seat->cursor_surface,
+			output->cursor_image->hotspot_x / output->scale,
+			output->cursor_image->hotspot_y / output->scale);
+		wl_surface_commit(seat->cursor_surface);
+	}
 }
 
 static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
@@ -214,23 +239,7 @@ static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
 	}
 
 	seat_set_outputs_dirty(seat);
-
-	if (output->state->cursor_shape_manager) {
-		struct wp_cursor_shape_device_v1 *device =
-			wp_cursor_shape_manager_v1_get_pointer(
-				output->state->cursor_shape_manager, wl_pointer);
-		wp_cursor_shape_device_v1_set_shape(device, serial,
-			WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
-		wp_cursor_shape_device_v1_destroy(device);
-	} else {
-		wl_surface_set_buffer_scale(seat->cursor_surface, output->scale);
-		wl_surface_attach(seat->cursor_surface,
-			wl_cursor_image_get_buffer(output->cursor_image), 0, 0);
-		wl_pointer_set_cursor(wl_pointer, serial, seat->cursor_surface,
-			output->cursor_image->hotspot_x / output->scale,
-			output->cursor_image->hotspot_y / output->scale);
-		wl_surface_commit(seat->cursor_surface);
-	}
+	set_default_pointer_cursor(seat, output, wl_pointer, serial);
 }
 
 static void pointer_handle_leave(void *data, struct wl_pointer *wl_pointer,
@@ -346,10 +355,11 @@ static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 		}
 		break;
 	case BTN_RIGHT:
+	case BTN_MIDDLE:
 		if (!state->selection_started) {
 			switch (button_state) {
 			case WL_POINTER_BUTTON_STATE_PRESSED:
-				handle_draw_start(seat, &seat->pointer_selection);
+				handle_draw_start(seat, &seat->pointer_selection, button == BTN_RIGHT ? 255 : 128);
 				break;
 			case WL_POINTER_BUTTON_STATE_RELEASED:
 				handle_draw_end(seat, &seat->pointer_selection);
@@ -365,12 +375,25 @@ static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 	}
 }
 
+static void pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
+		uint32_t time, uint32_t axis, wl_fixed_t fixed_value) {
+	struct slurp_seat *seat = data;
+	double value = wl_fixed_to_double(fixed_value);
+	int32_t new_width = seat->draw_width - (int32_t) (value / 2.0);
+	if (new_width < 1) {
+		new_width = 1;
+	} else if (new_width > 255) {
+		new_width = 255;
+	}
+	seat->draw_width = new_width;
+}
+
 static const struct wl_pointer_listener pointer_listener = {
 	.enter = pointer_handle_enter,
 	.leave = pointer_handle_leave,
 	.motion = pointer_handle_motion,
 	.button = pointer_handle_button,
-	.axis = noop,
+	.axis = pointer_handle_axis,
 };
 
 static void keyboard_handle_keymap(void *data, struct wl_keyboard *wl_keyboard,
@@ -557,6 +580,7 @@ static void create_seat(struct slurp_state *state, struct wl_seat *wl_seat) {
 	seat->state = state;
 	seat->wl_seat = wl_seat;
 	seat->touch_id = TOUCH_ID_EMPTY;
+	seat->draw_width = DEFAULT_DRAW_WIDTH;
 	wl_list_insert(&state->seats, &seat->link);
 	wl_seat_add_listener(wl_seat, &seat_listener, seat);
 }
@@ -979,7 +1003,7 @@ static bool create_cursors(struct slurp_state *state) {
 			return false;
 		}
 		struct wl_cursor *cursor =
-			wl_cursor_theme_get_cursor(output->cursor_theme, "left_ptr");
+			wl_cursor_theme_get_cursor(output->cursor_theme, "crosshair");
 		if (cursor == NULL) {
 			fprintf(stderr, "failed to load cursor\n");
 			return false;

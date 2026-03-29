@@ -13,6 +13,7 @@
 #include "xdg-output-unstable-v1-client-protocol.h"
 
 #define TOUCH_ID_EMPTY -1
+#define M_PI 3.14159265358979323846
 
 struct slurp_selection {
   struct slurp_output *current_output;
@@ -117,7 +118,11 @@ struct slurp_seat {
   // touch:
   struct wl_touch *wl_touch;
   int32_t touch_id;
+
+  uint8_t draw_width;
 };
+
+void set_source_u32(cairo_t *cairo, uint32_t color);
 
 bool box_intersect(const struct slurp_box *a, const struct slurp_box *b);
 
