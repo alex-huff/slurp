@@ -21,7 +21,7 @@ static void draw_rect(cairo_t *cairo, struct slurp_box *box, uint32_t color) {
 static void draw_rect_border(cairo_t *cairo, struct slurp_box *box, uint32_t color, uint32_t line_width) {
 	set_source_u32(cairo, color);
 	cairo_set_line_width(cairo, line_width);
-	uint32_t offset = (line_width + 1) / 2;
+	int32_t offset = (line_width + 1) / 2;
 	cairo_rectangle(cairo, box->x - offset, box->y - offset,
 			box->width + 2 * offset, box->height + 2 * offset);
 }
