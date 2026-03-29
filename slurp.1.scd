@@ -76,6 +76,9 @@ held, the selection is moved instead of being resized.
 *-y* _background image_
 	Draw specified PNG background image on each display output.
 
+*-e* _path_
+	Save selected region as PNG to path.
+
 # COLORS
 
 Colors may be specified in #RRGGBB or #RRGGBBAA format. The # is optional.

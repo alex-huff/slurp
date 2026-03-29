@@ -27,6 +27,7 @@ struct slurp_state {
   bool running;
   bool edit_anchor;
   bool selection_started;
+  const char *save_path;
 
   struct wl_display *display;
   struct wl_registry *registry;

@@ -866,7 +866,8 @@ static const char usage[] =
 	"  -p           Select a single point.\n"
 	"  -r           Restrict selection to predefined boxes.\n"
 	"  -a w:h       Force aspect ratio.\n"
-	"  -y s         Set background image.\n";
+	"  -y s         Set background image.\n"
+	"  -e s         Save to image.\n";
 
 uint32_t parse_color(const char *color) {
 	if (color[0] == '#') {
@@ -908,6 +909,36 @@ static void print_output_name(FILE *stream, const struct slurp_box *result, stru
 		}
 	}
 	fprintf(stream, "<unknown>");
+}
+
+static int save_region_image(struct slurp_state *state) {
+	int status = EXIT_SUCCESS;
+	const cairo_format_t cairo_fmt = CAIRO_FORMAT_ARGB32;
+	struct slurp_box *result = &state->result;
+	struct slurp_output *output = output_from_box(result, &state->outputs);
+	int32_t image_width, image_height;
+	image_width = result->width * output->scale;
+	image_height = result->height * output->scale;
+	uint32_t stride = cairo_format_stride_for_width(cairo_fmt, image_width);
+	size_t size = stride * image_height;
+	void *image_data = malloc(size);
+	cairo_surface_t *image_surface = cairo_image_surface_create_for_data(image_data, cairo_fmt, image_width, image_height, stride);
+	cairo_t *cairo = cairo_create(image_surface);
+	int32_t result_offset_x, result_offset_y;
+	printf("x: %d, y: %d\n", output->logical_geometry.x, output->logical_geometry.y);
+	result_offset_x = (result->x - output->logical_geometry.x) * output->scale;
+	result_offset_y = (result->y - output->logical_geometry.y) * output->scale;
+	cairo_set_source_surface(cairo, output->current_buffer->surface, -result_offset_x, -result_offset_y);
+	cairo_paint(cairo);
+	cairo_status_t status_code = cairo_surface_write_to_png(image_surface, state->save_path);
+	if (status_code != 0) {
+		fprintf(stderr, "failed to save image: %s\n", cairo_status_to_string(status_code));
+		status = EXIT_FAILURE;
+	}
+	cairo_destroy(cairo);
+	cairo_surface_destroy(image_surface);
+	free(image_data);
+	return status;
 }
 
 static void print_formatted_result(FILE *stream, struct slurp_state *state , const char *format) {
@@ -1038,7 +1069,7 @@ int main(int argc, char *argv[]) {
 	char *format = "%x,%y %wx%h\n";
 	bool output_boxes = false;
 	int w, h;
-	while ((opt = getopt(argc, argv, "hdb:c:s:B:w:proa:f:F:y:")) != -1) {
+	while ((opt = getopt(argc, argv, "hdb:c:s:B:w:proa:f:F:y:e:")) != -1) {
 		switch (opt) {
 		case 'h':
 			printf("%s", usage);
@@ -1098,12 +1129,15 @@ int main(int argc, char *argv[]) {
 		case 'y':
 			state.background_surface = cairo_image_surface_create_from_png(optarg);
 			cairo_status_t status_code = cairo_surface_status(state.background_surface);
-			if (cairo_surface_status(state.background_surface) != 0) {
+			if (status_code != 0) {
 				fprintf(stderr, "failed to load background image: %s\n", cairo_status_to_string(status_code));
 				cairo_surface_destroy(state.background_surface);
 				state.background_surface = NULL;
 				return EXIT_FAILURE;
 			}
+			break;
+		case 'e':
+			state.save_path = optarg;
 			break;
 		default:
 			printf("%s", usage);
@@ -1242,6 +1276,10 @@ int main(int argc, char *argv[]) {
 		FILE *stream = open_memstream(&result_str, &length);
 		print_formatted_result(stream, &state, format);
 		fclose(stream);
+	}
+
+	if (status == EXIT_SUCCESS && state.save_path) {
+		status = save_region_image(&state);
 	}
 
 	struct slurp_output *output_tmp;

@@ -18,6 +18,14 @@ static void draw_rect(cairo_t *cairo, struct slurp_box *box, uint32_t color) {
 			box->width, box->height);
 }
 
+static void draw_rect_border(cairo_t *cairo, struct slurp_box *box, uint32_t color, uint32_t line_width) {
+	set_source_u32(cairo, color);
+	cairo_set_line_width(cairo, line_width);
+	uint32_t offset = (line_width + 1) / 2;
+	cairo_rectangle(cairo, box->x - offset, box->y - offset,
+			box->width + 2 * offset, box->height + 2 * offset);
+}
+
 void render(struct slurp_output *output) {
 	struct slurp_state *state = output->state;
 	struct pool_buffer *buffer = output->current_buffer;
@@ -59,8 +67,7 @@ void render(struct slurp_output *output) {
 		cairo_fill(cairo);
 
 		// Draw border
-		cairo_set_line_width(cairo, state->border_weight);
-		draw_rect(cairo, sel_box, state->colors.border);
+		draw_rect_border(cairo, sel_box, state->colors.border, state->border_weight);
 		cairo_stroke(cairo);
 
 		if (state->display_dimensions) {
