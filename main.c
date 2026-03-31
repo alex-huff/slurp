@@ -831,7 +831,6 @@ static void destroy_output(struct slurp_output *output) {
 	if (output->cursor_theme) {
 		wl_cursor_theme_destroy(output->cursor_theme);
 	}
-	zwlr_layer_surface_v1_destroy(output->layer_surface);
 	if (output->xdg_output) {
 		zxdg_output_v1_destroy(output->xdg_output);
 	}
@@ -957,6 +956,7 @@ static void layer_surface_handle_configure(void *data,
 static void layer_surface_handle_closed(void *data,
 		struct zwlr_layer_surface_v1 *surface) {
 	struct slurp_output *output = data;
+	zwlr_layer_surface_v1_destroy(output->layer_surface);
 	destroy_output(output);
 }
 
@@ -1453,11 +1453,17 @@ int main(int argc, char *argv[]) {
 		fclose(stream);
 	}
 
+	// Close the layer surface immediately
+	struct slurp_output *output_tmp;
+	wl_list_for_each_safe(output, output_tmp, &state.outputs, link) {
+		zwlr_layer_surface_v1_destroy(output->layer_surface);
+	}
+	wl_display_roundtrip(state.display);
+
 	if (status == EXIT_SUCCESS && state.save_path) {
 		status = save_region_image(&state);
 	}
 
-	struct slurp_output *output_tmp;
 	wl_list_for_each_safe(output, output_tmp, &state.outputs, link) {
 		destroy_output(output);
 	}
