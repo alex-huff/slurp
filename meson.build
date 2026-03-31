@@ -7,7 +7,11 @@ project(
 	default_options: ['c_std=c11', 'warning_level=2', 'werror=true'],
 )
 
-add_project_arguments('-Wno-unused-parameter', language: 'c')
+is_le = host_machine.endian() == 'little'
+add_project_arguments([
+	'-Wno-unused-parameter',
+	'-DSLURP_LITTLE_ENDIAN=@0@'.format(is_le.to_int()),
+], language: 'c')
 
 cc = meson.get_compiler('c')
 

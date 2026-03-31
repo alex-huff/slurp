@@ -73,8 +73,8 @@ held, the selection is moved instead of being resized.
 	Force selections to have the given aspect ratio. This constraint is not
 	applied to the predefined rectangles specified using *-o*.
 
-*-y* _background image_
-	Draw specified PNG background image on each display output.
+*-y* _freeze outputs_
+	Freeze each display output.
 
 *-e* _path_
 	Save selected region as PNG to path.

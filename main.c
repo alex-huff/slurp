@@ -600,6 +600,150 @@ static void destroy_seat(struct slurp_seat *seat) {
 	free(seat);
 }
 
+static void ext_image_copy_capture_frame_handle_transform(void *data,
+		struct ext_image_copy_capture_frame_v1 *frame, uint32_t transform) {
+	struct slurp_capture *capture = data;
+	capture->transform = transform;
+}
+
+static void ext_image_copy_capture_frame_handle_damage(void *data,
+		struct ext_image_copy_capture_frame_v1 *frame, int32_t x, int32_t y,
+		int32_t wdth, int32_t height) {
+	// No-op
+}
+
+static void ext_image_copy_capture_frame_handle_presentation_time(void *data,
+		struct ext_image_copy_capture_frame_v1 *frame, uint32_t tv_sec_hi,
+		uint32_t tv_sec_lo, uint32_t tv_nsec) {
+	// No-op
+}
+
+static inline uint32_t right_shift(uint32_t in, int8_t amount) {
+	if (amount >= 0) {
+		return in >> amount;
+	} else {
+		return in << -amount;
+	}
+}
+
+static void ext_image_copy_capture_frame_handle_ready(void *data,
+		struct ext_image_copy_capture_frame_v1 *frame) {
+	struct slurp_capture *capture = data;
+	capture->ready = true;
+	uint8_t byte_order = capture->byte_order;
+	if (byte_order != DEFAULT_BYTE_ORDER) {
+		uint32_t *data = capture->buffer.data;
+		int8_t byte_shift_0 = ((int8_t)((byte_order & 0b00000011u) >> 0) - 0) * 8;
+		int8_t byte_shift_1 = ((int8_t)((byte_order & 0b00001100u) >> 2) - 1) * 8;
+		int8_t byte_shift_2 = ((int8_t)((byte_order & 0b00110000u) >> 4) - 2) * 8;
+		int8_t byte_shift_3 = ((int8_t)((byte_order & 0b11000000u) >> 6) - 3) * 8;
+		for (size_t i = 0; i < capture->buffer.size / sizeof(uint32_t); i++) {
+			data[i] =
+				(right_shift(data[i], byte_shift_0) & 0x000000ffu) |
+				(right_shift(data[i], byte_shift_1) & 0x0000ff00u) |
+				(right_shift(data[i], byte_shift_2) & 0x00ff0000u) |
+				(right_shift(data[i], byte_shift_3) & 0xff000000u);
+		}
+	}
+	set_output_dirty(capture->output);
+}
+
+static void ext_image_copy_capture_frame_handle_failed(void *data,
+		struct ext_image_copy_capture_frame_v1 *frame, uint32_t reason) {
+	struct slurp_capture *capture = data;
+	fprintf(stderr, "failed to copy output %s\n", capture->output->logical_geometry.label);
+	exit(EXIT_FAILURE);
+}
+
+static const struct ext_image_copy_capture_frame_v1_listener ext_image_copy_capture_frame_listener = {
+	.transform = ext_image_copy_capture_frame_handle_transform,
+	.damage = ext_image_copy_capture_frame_handle_damage,
+	.presentation_time = ext_image_copy_capture_frame_handle_presentation_time,
+	.ready = ext_image_copy_capture_frame_handle_ready,
+	.failed = ext_image_copy_capture_frame_handle_failed,
+};
+
+static void ext_image_copy_capture_session_handle_buffer_size(void *data,
+		struct ext_image_copy_capture_session_v1 *session, uint32_t width, uint32_t height) {
+	struct slurp_capture *capture = data;
+	capture->buffer_width = width;
+	capture->buffer_height = height;
+}
+
+static void ext_image_copy_capture_session_handle_shm_format(void *data,
+		struct ext_image_copy_capture_session_v1 *session, uint32_t format) {
+	struct slurp_capture *capture = data;
+
+	if (capture->has_shm_format) {
+		return;
+	}
+	uint8_t byte_order = DEFAULT_BYTE_ORDER;
+	cairo_format_t cairo_format = wl_shm_format_to_cairo(format, &byte_order);
+	if (cairo_format == CAIRO_FORMAT_INVALID) {
+		return;
+	}
+
+	capture->shm_format = format;
+	capture->cairo_format = cairo_format;
+	capture->has_shm_format = true;
+	capture->byte_order = byte_order;
+}
+
+static void ext_image_copy_capture_session_handle_dmabuf_device(void *data,
+		struct ext_image_copy_capture_session_v1 *session, struct wl_array *dev_id_array) {
+	// No-op
+}
+
+static void ext_image_copy_capture_session_handle_dmabuf_format(void *data,
+		struct ext_image_copy_capture_session_v1 *session, uint32_t format,
+		struct wl_array *modifiers_array) {
+	// No-op
+}
+
+static void ext_image_copy_capture_session_handle_done(void *data,
+		struct ext_image_copy_capture_session_v1 *session) {
+	struct slurp_capture *capture = data;
+
+	if (capture->ext_image_copy_capture_frame != NULL) {
+		return;
+	}
+
+	if (!capture->has_shm_format) {
+		fprintf(stderr, "no supported format found\n");
+		exit(EXIT_FAILURE);
+	}
+
+	if (!create_buffer(
+			capture->state->shm, &capture->buffer, capture->buffer_width,
+			capture->buffer_height, capture->shm_format, capture->cairo_format)) {
+		fprintf(stderr, "failed to create buffer\n");
+		exit(EXIT_FAILURE);
+	}
+
+	capture->ext_image_copy_capture_frame = ext_image_copy_capture_session_v1_create_frame(session);
+	ext_image_copy_capture_frame_v1_add_listener(capture->ext_image_copy_capture_frame,
+		&ext_image_copy_capture_frame_listener, capture);
+
+	ext_image_copy_capture_frame_v1_attach_buffer(capture->ext_image_copy_capture_frame, capture->buffer.buffer);
+	ext_image_copy_capture_frame_v1_damage_buffer(capture->ext_image_copy_capture_frame,
+		0, 0, INT32_MAX, INT32_MAX);
+	ext_image_copy_capture_frame_v1_capture(capture->ext_image_copy_capture_frame);
+}
+
+static void ext_image_copy_capture_session_handle_stopped(void *data,
+		struct ext_image_copy_capture_session_v1 *session) {
+	// No-op
+}
+
+static const struct ext_image_copy_capture_session_v1_listener ext_image_copy_capture_session_listener = {
+	.buffer_size = ext_image_copy_capture_session_handle_buffer_size,
+	.shm_format = ext_image_copy_capture_session_handle_shm_format,
+	.dmabuf_device = ext_image_copy_capture_session_handle_dmabuf_device,
+	.dmabuf_format = ext_image_copy_capture_session_handle_dmabuf_format,
+	.done = ext_image_copy_capture_session_handle_done,
+	.stopped = ext_image_copy_capture_session_handle_stopped,
+};
+
 static void output_handle_geometry(void *data, struct wl_output *wl_output,
 		int32_t x, int32_t y, int32_t physical_width, int32_t physical_height,
 		int32_t subpixel, const char *make, const char *model,
@@ -706,6 +850,13 @@ static void destroy_output(struct slurp_output *output) {
 	if (output->drawing_surface_data) {
 		free(output->drawing_surface_data);
 	}
+	if (output->capture.ext_image_copy_capture_frame != NULL) {
+		ext_image_copy_capture_frame_v1_destroy(output->capture.ext_image_copy_capture_frame);
+	}
+	if (output->capture.ext_image_copy_capture_session != NULL) {
+		ext_image_copy_capture_session_v1_destroy(output->capture.ext_image_copy_capture_session);
+	}
+	finish_buffer(&output->capture.buffer);
 	free(output);
 }
 
@@ -839,6 +990,12 @@ static void handle_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, zxdg_output_manager_v1_interface.name) == 0) {
 		state->xdg_output_manager = wl_registry_bind(registry, name,
 			&zxdg_output_manager_v1_interface, 2);
+	} else if (strcmp(interface, ext_output_image_capture_source_manager_v1_interface.name) == 0) {
+		state->ext_output_image_capture_source_manager = wl_registry_bind(registry, name,
+			&ext_output_image_capture_source_manager_v1_interface, 1);
+	} else if (strcmp(interface, ext_image_copy_capture_manager_v1_interface.name) == 0) {
+		state->ext_image_copy_capture_manager = wl_registry_bind(registry, name,
+			&ext_image_copy_capture_manager_v1_interface, 1);
 	} else if (strcmp(interface, wp_cursor_shape_manager_v1_interface.name) == 0) {
 		state->cursor_shape_manager = wl_registry_bind(registry, name,
 			&wp_cursor_shape_manager_v1_interface, 1);
@@ -866,7 +1023,7 @@ static const char usage[] =
 	"  -p           Select a single point.\n"
 	"  -r           Restrict selection to predefined boxes.\n"
 	"  -a w:h       Force aspect ratio.\n"
-	"  -y s         Set background image.\n"
+	"  -y           Freeze outputs.\n"
 	"  -e s         Save to image.\n";
 
 uint32_t parse_color(const char *color) {
@@ -925,7 +1082,6 @@ static int save_region_image(struct slurp_state *state) {
 	cairo_surface_t *image_surface = cairo_image_surface_create_for_data(image_data, cairo_fmt, image_width, image_height, stride);
 	cairo_t *cairo = cairo_create(image_surface);
 	int32_t result_offset_x, result_offset_y;
-	printf("x: %d, y: %d\n", output->logical_geometry.x, output->logical_geometry.y);
 	result_offset_x = (result->x - output->logical_geometry.x) * output->scale;
 	result_offset_y = (result->y - output->logical_geometry.y) * output->scale;
 	cairo_set_source_surface(cairo, output->current_buffer->surface, -result_offset_x, -result_offset_y);
@@ -1045,6 +1201,23 @@ static bool create_cursors(struct slurp_state *state) {
 	return true;
 }
 
+static void create_output_capture(struct slurp_state *state, struct slurp_output *output, bool with_cursor) {
+	output->capture.state = state;
+	output->capture.output = output;
+	uint32_t options = 0;
+	// TODO: make configurable
+	if (true) {
+		options |= EXT_IMAGE_COPY_CAPTURE_MANAGER_V1_OPTIONS_PAINT_CURSORS;
+	}
+	struct ext_image_capture_source_v1 *source = ext_output_image_capture_source_manager_v1_create_source(
+		state->ext_output_image_capture_source_manager, output->wl_output);
+	output->capture.ext_image_copy_capture_session = ext_image_copy_capture_manager_v1_create_session(
+		state->ext_image_copy_capture_manager, source, options);
+	ext_image_copy_capture_session_v1_add_listener(output->capture.ext_image_copy_capture_session,
+		&ext_image_copy_capture_session_listener, &output->capture);
+	ext_image_capture_source_v1_destroy(source);
+}
+
 int main(int argc, char *argv[]) {
 	int status = EXIT_SUCCESS;
 
@@ -1055,7 +1228,6 @@ int main(int argc, char *argv[]) {
 			.selection = SELECTION_COLOR,
 			.choice = BG_COLOR,
 		},
-		.background_surface = NULL,
 		.border_weight = 2,
 		.display_dimensions = false,
 		.restrict_selection = false,
@@ -1069,7 +1241,7 @@ int main(int argc, char *argv[]) {
 	char *format = "%x,%y %wx%h\n";
 	bool output_boxes = false;
 	int w, h;
-	while ((opt = getopt(argc, argv, "hdb:c:s:B:w:proa:f:F:y:e:")) != -1) {
+	while ((opt = getopt(argc, argv, "hdb:c:s:B:w:proa:f:F:ye:")) != -1) {
 		switch (opt) {
 		case 'h':
 			printf("%s", usage);
@@ -1127,14 +1299,7 @@ int main(int argc, char *argv[]) {
 			state.aspect_ratio = (double) h / w;
 			break;
 		case 'y':
-			state.background_surface = cairo_image_surface_create_from_png(optarg);
-			cairo_status_t status_code = cairo_surface_status(state.background_surface);
-			if (status_code != 0) {
-				fprintf(stderr, "failed to load background image: %s\n", cairo_status_to_string(status_code));
-				cairo_surface_destroy(state.background_surface);
-				state.background_surface = NULL;
-				return EXIT_FAILURE;
-			}
+			state.freeze_outputs = true;
 			break;
 		case 'e':
 			state.save_path = optarg;
@@ -1202,8 +1367,16 @@ int main(int argc, char *argv[]) {
 		return EXIT_FAILURE;
 	}
 	if (state.xdg_output_manager == NULL) {
-		fprintf(stderr, "compositor doesn't support xdg-output. "
-			"Guessing geometry from physical output size.\n");
+		fprintf(stderr, "compositor doesn't support xdg-output\n");
+		return EXIT_FAILURE;
+	}
+	if (state.freeze_outputs && state.ext_image_copy_capture_manager == NULL) {
+		fprintf(stderr, "compositor doesn't support ext-image-copy-capture\n");
+		return EXIT_FAILURE;
+	}
+	if (state.freeze_outputs && state.ext_output_image_capture_source_manager == NULL) {
+		fprintf(stderr, "compositor doesn't support ext-output-image-capture-source\n");
+		return EXIT_FAILURE;
 	}
 	if (wl_list_empty(&state.outputs)) {
 		fprintf(stderr, "no wl_output\n");
@@ -1221,17 +1394,10 @@ int main(int argc, char *argv[]) {
 		zwlr_layer_surface_v1_add_listener(output->layer_surface,
 		  &layer_surface_listener, output);
 
-		if (state.xdg_output_manager) {
-			output->xdg_output = zxdg_output_manager_v1_get_xdg_output(
-				state.xdg_output_manager, output->wl_output);
-			zxdg_output_v1_add_listener(output->xdg_output,
-				&xdg_output_listener, output);
-		} else {
-			// guess
-			output->logical_geometry = output->geometry;
-			output->logical_geometry.width /= output->scale;
-			output->logical_geometry.height /= output->scale;
-		}
+		output->xdg_output = zxdg_output_manager_v1_get_xdg_output(
+			state.xdg_output_manager, output->wl_output);
+		zxdg_output_v1_add_listener(output->xdg_output,
+			&xdg_output_listener, output);
 
 		zwlr_layer_surface_v1_set_anchor(output->layer_surface,
 			ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
@@ -1260,6 +1426,12 @@ int main(int argc, char *argv[]) {
 	wl_list_for_each(seat, &state.seats, link) {
 		seat->cursor_surface =
 			wl_compositor_create_surface(state.compositor);
+	}
+
+	if (state.freeze_outputs) {
+		wl_list_for_each(output, &state.outputs, link) {
+			create_output_capture(&state, output, true);
+		}
 	}
 
 	state.running = true;
@@ -1295,9 +1467,13 @@ int main(int argc, char *argv[]) {
 	wl_display_roundtrip(state.display);
 
 	zwlr_layer_shell_v1_destroy(state.layer_shell);
-	if (state.xdg_output_manager != NULL) {
-		zxdg_output_manager_v1_destroy(state.xdg_output_manager);
+	if (state.ext_output_image_capture_source_manager != NULL) {
+		ext_output_image_capture_source_manager_v1_destroy(state.ext_output_image_capture_source_manager);
 	}
+	if (state.ext_image_copy_capture_manager != NULL) {
+		ext_image_copy_capture_manager_v1_destroy(state.ext_image_copy_capture_manager);
+	}
+	zxdg_output_manager_v1_destroy(state.xdg_output_manager);
 	if (state.cursor_shape_manager != NULL) {
 		wp_cursor_shape_manager_v1_destroy(state.cursor_shape_manager);
 	}
@@ -1306,10 +1482,6 @@ int main(int argc, char *argv[]) {
 	wl_registry_destroy(state.registry);
 	xkb_context_unref(state.xkb_context);
 	wl_display_disconnect(state.display);
-
-	if (state.background_surface) {
-		cairo_surface_destroy(state.background_surface);
-	}
 
 	struct slurp_box *box, *box_tmp;
 	wl_list_for_each_safe(box, box_tmp, &state.boxes, link) {

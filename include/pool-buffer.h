@@ -19,5 +19,8 @@ struct pool_buffer {
 struct pool_buffer *get_next_buffer(struct wl_shm *shm,
 	struct pool_buffer pool[static 2], uint32_t width, uint32_t height);
 void finish_buffer(struct pool_buffer *buffer);
+struct pool_buffer *create_buffer(struct wl_shm *shm,
+		struct pool_buffer *buf, int32_t width, int32_t height,
+		enum wl_shm_format wl_fmt, cairo_format_t cairo_fmt);
 
 #endif

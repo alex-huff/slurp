@@ -11,9 +11,12 @@
 #include "pool-buffer.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
+#include "ext-image-capture-source-v1-client-protocol.h"
+#include "ext-image-copy-capture-v1-client-protocol.h"
 
 #define TOUCH_ID_EMPTY -1
 #define M_PI 3.14159265358979323846
+#define DEFAULT_BYTE_ORDER 0b11100100
 
 struct slurp_selection {
   struct slurp_output *current_output;
@@ -27,6 +30,7 @@ struct slurp_state {
   bool running;
   bool edit_anchor;
   bool selection_started;
+  bool freeze_outputs;
   const char *save_path;
 
   struct wl_display *display;
@@ -35,9 +39,11 @@ struct slurp_state {
   struct wl_compositor *compositor;
   struct zwlr_layer_shell_v1 *layer_shell;
   struct zxdg_output_manager_v1 *xdg_output_manager;
+  struct ext_output_image_capture_source_manager_v1 *ext_output_image_capture_source_manager;
+  struct ext_image_copy_capture_manager_v1 *ext_image_copy_capture_manager;
   struct wp_cursor_shape_manager_v1 *cursor_shape_manager;
-  struct wl_list outputs; // slurp_output::link
-  struct wl_list seats;   // slurp_seat::link
+  struct wl_list outputs;  // slurp_output::link
+  struct wl_list seats;    // slurp_seat::link
 
   struct xkb_context *xkb_context;
 
@@ -47,8 +53,6 @@ struct slurp_state {
     uint32_t selection;
     uint32_t choice;
   } colors;
-
-  cairo_surface_t *background_surface;
 
   const char *font_family;
 
@@ -64,9 +68,29 @@ struct slurp_state {
   struct slurp_box result;
 };
 
+struct slurp_capture {
+  struct slurp_state *state;
+  struct slurp_output *output;
+  struct wl_list link;
+
+  enum wl_output_transform transform;
+
+  struct pool_buffer buffer;
+
+  struct ext_image_copy_capture_session_v1 *ext_image_copy_capture_session;
+  struct ext_image_copy_capture_frame_v1 *ext_image_copy_capture_frame;
+  uint32_t buffer_width, buffer_height;
+  enum wl_shm_format shm_format;
+  cairo_format_t cairo_format;
+  bool has_shm_format;
+  uint8_t byte_order;
+  bool ready;
+};
+
 struct slurp_output {
   struct wl_output *wl_output;
   struct slurp_state *state;
+  struct slurp_capture capture;
   struct wl_list link; // slurp_state::outputs
 
   struct slurp_box geometry;
@@ -126,6 +150,8 @@ struct slurp_seat {
 void set_source_u32(cairo_t *cairo, uint32_t color);
 
 bool box_intersect(const struct slurp_box *a, const struct slurp_box *b);
+
+cairo_format_t wl_shm_format_to_cairo(enum wl_shm_format shm_format, uint8_t *byte_order);
 
 static inline struct slurp_selection *
 slurp_seat_current_selection(struct slurp_seat *seat) {

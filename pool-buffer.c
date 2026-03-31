@@ -63,11 +63,9 @@ static const struct wl_buffer_listener buffer_listener = {
 	.release = buffer_handle_release,
 };
 
-static struct pool_buffer *create_buffer(struct wl_shm *shm,
-		struct pool_buffer *buf, int32_t width, int32_t height) {
-	const enum wl_shm_format wl_fmt = WL_SHM_FORMAT_ARGB8888;
-	const cairo_format_t cairo_fmt = CAIRO_FORMAT_ARGB32;
-
+struct pool_buffer *create_buffer(struct wl_shm *shm,
+		struct pool_buffer *buf, int32_t width, int32_t height,
+		enum wl_shm_format wl_fmt, cairo_format_t cairo_fmt) {
 	uint32_t stride = cairo_format_stride_for_width(cairo_fmt, width);
 	size_t size = stride * height;
 
@@ -137,7 +135,7 @@ struct pool_buffer *get_next_buffer(struct wl_shm *shm,
 	}
 
 	if (!buffer->buffer) {
-		if (!create_buffer(shm, buffer, width, height)) {
+		if (!create_buffer(shm, buffer, width, height, WL_SHM_FORMAT_ARGB8888, CAIRO_FORMAT_ARGB32)) {
 			return NULL;
 		}
 	}
