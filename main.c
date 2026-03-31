@@ -1024,6 +1024,7 @@ static const char usage[] =
 	"  -r           Restrict selection to predefined boxes.\n"
 	"  -a w:h       Force aspect ratio.\n"
 	"  -y           Freeze outputs.\n"
+	"  -z           Show cursors on frozen outputs.\n"
 	"  -e s         Save to image.\n";
 
 uint32_t parse_color(const char *color) {
@@ -1205,8 +1206,7 @@ static void create_output_capture(struct slurp_state *state, struct slurp_output
 	output->capture.state = state;
 	output->capture.output = output;
 	uint32_t options = 0;
-	// TODO: make configurable
-	if (true) {
+	if (state->paint_cursors) {
 		options |= EXT_IMAGE_COPY_CAPTURE_MANAGER_V1_OPTIONS_PAINT_CURSORS;
 	}
 	struct ext_image_capture_source_v1 *source = ext_output_image_capture_source_manager_v1_create_source(
@@ -1241,7 +1241,7 @@ int main(int argc, char *argv[]) {
 	char *format = "%x,%y %wx%h\n";
 	bool output_boxes = false;
 	int w, h;
-	while ((opt = getopt(argc, argv, "hdb:c:s:B:w:proa:f:F:ye:")) != -1) {
+	while ((opt = getopt(argc, argv, "hdb:c:s:B:w:proa:f:F:yze:")) != -1) {
 		switch (opt) {
 		case 'h':
 			printf("%s", usage);
@@ -1300,6 +1300,9 @@ int main(int argc, char *argv[]) {
 			break;
 		case 'y':
 			state.freeze_outputs = true;
+			break;
+		case 'z':
+			state.paint_cursors = true;
 			break;
 		case 'e':
 			state.save_path = optarg;

@@ -31,6 +31,7 @@ struct slurp_state {
   bool edit_anchor;
   bool selection_started;
   bool freeze_outputs;
+  bool paint_cursors;
   const char *save_path;
 
   struct wl_display *display;

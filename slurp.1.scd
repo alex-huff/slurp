@@ -76,6 +76,9 @@ held, the selection is moved instead of being resized.
 *-y* _freeze outputs_
 	Freeze each display output.
 
+*-z* _show cursors_
+	Show cursors on frozen outputs.
+
 *-e* _path_
 	Save selected region as PNG to path.
 
