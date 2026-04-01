@@ -956,6 +956,9 @@ static void layer_surface_handle_configure(void *data,
 static void layer_surface_handle_closed(void *data,
 		struct zwlr_layer_surface_v1 *surface) {
 	struct slurp_output *output = data;
+	if (output == NULL) {
+		return;
+	}
 	zwlr_layer_surface_v1_destroy(output->layer_surface);
 	destroy_output(output);
 }
