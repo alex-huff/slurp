@@ -1205,7 +1205,7 @@ static bool create_cursors(struct slurp_state *state) {
 	return true;
 }
 
-static void create_output_capture(struct slurp_state *state, struct slurp_output *output, bool with_cursor) {
+static void create_output_capture(struct slurp_state *state, struct slurp_output *output) {
 	output->capture.state = state;
 	output->capture.output = output;
 	uint32_t options = 0;
@@ -1436,7 +1436,7 @@ int main(int argc, char *argv[]) {
 
 	if (state.freeze_outputs) {
 		wl_list_for_each(output, &state.outputs, link) {
-			create_output_capture(&state, output, true);
+			create_output_capture(&state, output);
 		}
 	}
 
